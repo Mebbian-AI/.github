@@ -1,0 +1,124 @@
+name: Repository Standards
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  standards:
+    name: Repository standards
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          required_files=(
+            "README.md"
+            "SECURITY.md"
+            "CONTRIBUTING.md"
+            "CODEOWNERS"
+            ".github/PULL_REQUEST_TEMPLATE.md"
+            ".github/ISSUE_TEMPLATE/bug_report.md"
+            ".github/ISSUE_TEMPLATE/feature_request.md"
+          )
+
+          missing=0
+
+          for file in "${required_files[@]}"; do
+            if [ ! -f "$file" ]; then
+              echo "Missing required file: $file"
+              missing=1
+            fi
+          done
+
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Block committed env files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forbidden_files=$(find . \
+            -type f \
+            \( -name ".env" -o -name ".env.local" -o -name ".env.production" -o -name ".env.development" -o -name "*.pem" -o -name "*.p12" -o -name "*.pfx" -o -name "*.key" \) \
+            -not -path "./.git/*" \
+            -print)
+
+          if [ -n "$forbidden_files" ]; then
+            echo "Forbidden secret-like files found:"
+            echo "$forbidden_files"
+            exit 1
+          fi
+
+      - name: Check .env.example safety
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -f ".env.example" ]; then
+            if grep -Eiq '(sk-[A-Za-z0-9]|ghp_[A-Za-z0-9]|xox[baprs]-|-----BEGIN|password=.*[^[:space:]]|secret=.*[^[:space:]]|token=.*[^[:space:]])' .env.example; then
+              echo ".env.example appears to contain a real secret or token-like value."
+              exit 1
+            fi
+          fi
+
+      - name: Scan for obvious secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -RInE \
+            --exclude-dir=.git \
+            --exclude='*.lock' \
+            --exclude='package-lock.json' \
+            --exclude='pnpm-lock.yaml' \
+            --exclude='yarn.lock' \
+            '(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC|DSA)? ?PRIVATE KEY-----)' \
+            .; then
+              echo "Potential secret detected. Remove it before merging."
+              exit 1
+          fi
+
+      - name: Public-surface language check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          forbidden_terms='YC|Y Combinator|fundraising|investor|ARR|cap table|equity split|visa|founder dispute|internal drama'
+
+          paths=()
+          [ -f "README.md" ] && paths+=("README.md")
+          [ -d "profile" ] && paths+=("profile")
+          [ -f ".github/PULL_REQUEST_TEMPLATE.md" ] && paths+=(".github/PULL_REQUEST_TEMPLATE.md")
+          [ -d ".github/ISSUE_TEMPLATE" ] && paths+=(".github/ISSUE_TEMPLATE")
+
+          if [ "${#paths[@]}" -eq 0 ]; then
+            echo "No public-facing markdown paths found. Skipping."
+            exit 0
+          fi
+
+          if grep -RInE \
+            --exclude-dir=.git \
+            --exclude='BRANCH_CI_SETUP_REPORT.md' \
+            --exclude='ORG_SETUP_REPORT.md' \
+            "$forbidden_terms" \
+            "${paths[@]}" 2>/dev/null; then
+              echo "Potential internal/fundraising/private language found on a public-facing surface."
+              echo "Remove it or move it to a private internal document."
+              exit 1
+          fi

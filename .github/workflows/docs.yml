@@ -1,0 +1,67 @@
+name: Docs
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: Docs check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check markdown files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          markdown_count=$(find . \
+            -type f \
+            -name "*.md" \
+            -not -path "./.git/*" \
+            | wc -l | tr -d ' ')
+
+          if [ "$markdown_count" -eq 0 ]; then
+            echo "No markdown files found."
+            exit 1
+          fi
+
+          echo "Markdown files found: $markdown_count"
+
+      - name: Check for unfinished placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -RInE \
+            --exclude-dir=.git \
+            --include='*.md' \
+            'TODO:|FIXME:|TBD|lorem ipsum|coming soon' \
+            .; then
+              echo "Placeholder content found. Replace or intentionally document why it remains."
+              exit 1
+          fi
+
+      - name: Check for secrets in docs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if grep -RInE \
+            --exclude-dir=.git \
+            --include='*.md' \
+            '(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA|OPENSSH|EC|DSA)? ?PRIVATE KEY-----)' \
+            .; then
+              echo "Potential secret detected in docs."
+              exit 1
+          fi
